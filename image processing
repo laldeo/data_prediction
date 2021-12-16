@@ -1,0 +1,206 @@
+from django.shortcuts import render
+import os, fnmatch
+import numpy as np
+import tensorflow as tf
+from PIL import Image,ImageEnhance
+from rest_framework.decorators import api_view
+from django.http import JsonResponse
+import logging
+import ftfy
+import pytesseract
+from pytesseract import Output
+from maskFld import predict
+import re
+import cv2
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STATIC_ROOT = os.path.join(BASE_DIR, "static/")
+
+trainPath = ""+STATIC_ROOT+"trainedModel"
+
+
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+
+# Create your views here.
+@api_view(['POST'])
+def maskFromFile(request):
+	returnResponse = ''
+	if request.method == "POST":
+		text_info = request.data
+		try:
+			if text_info['spath'] != '' and text_info['dpath'] != '' :
+				spath = text_info['spath']
+				dpath = text_info['dpath']
+
+				print(spath)
+				print(dpath)
+				if not os.path.exists(spath):
+					print("No such directory")
+					returnResponse = {"statuscode": "101-0004", "statusmessage": "source path is not correct"}
+
+				if not os.path.exists(dpath):
+					print("No such directory")
+					returnResponse = {"statuscode": "101-0004", "statusmessage": "destination path is not correct"}
+				notmasked = dpath+"/notmasked"
+				if not os.path.exists(notmasked):
+					os.makedirs(notmasked)
+
+				# text_output = open('fnd2.txt', 'w', encoding='utf-8')
+				# text_output.write(spath+' '+dpath)
+				# text_output.close()
+
+				# from subprocess import Popen
+				# p = Popen("test.bat", cwd=r"C:/")
+				# stdout, stderr = p.communicate()
+				##
+				# import subprocess
+				# subprocess.call('C:/ADMASK/aadharMask/test.bat', shell=False)
+				# #subprocess.terminate()
+
+				# from subprocess import Popen
+				# p = Popen('C:/ADMASK/aadharMask/test.bat', shell=True) # something long running
+				# # ... do other stuff while subprocess is running
+				# #p.terminate()
+
+
+				# file = open('fnd2.txt', 'r', encoding='utf-8')
+				# text = file.read()
+				# print(text)
+				# lines = text.split(' ')
+				# print(lines)
+				####################
+				# returnResponse = {"statuscode": "100-0002", "statusmessage": "Successfully aadhar number is masked"}
+				
+
+				if os.path.exists(spath):
+					for root, dirs, files in os.walk(spath):
+						for name in files:
+							image_path = spath+'/'+name
+							print(image_path,"80")
+							img = cv2.imread(image_path)
+							img = cv2.resize(img, (900, 600),0,0, cv2.INTER_LINEAR)
+							imgff = cv2.imread(image_path)
+							ID_type = predict.predict_adhar(img,trainPath)
+							# print(ID_type,"*************")
+							################################
+
+							###########################################################
+							if ID_type == 'half_adhar':
+								print(ID_type,"*********90****")
+								d = pytesseract.image_to_data(img, output_type=Output.DICT)
+								print(d)
+								n_boxes = len(d['level'])
+								ll = max(d['left'])
+								nn = max(d['block_num'])
+								print("****nn**",nn)
+								print("image name is = ",name)
+								print("****ll**",ll)
+								count = 0
+								j=0
+								for i in range(n_boxes):
+									stad1=d['text'][i].replace('_','')
+									if stad1.isnumeric() and len(stad1) == 4:
+										print(stad1,"stad1")
+										if d['text'][::-1].index(d['text'][i]) != 0:
+											stad2=d['text'][i+1].replace('_','')
+											count = count + 1
+											if stad2.isnumeric() and len(stad2) == 4:
+												print(stad2,"stad2")
+												
+												print("count",count)
+												if count < 3:                        
+													(x, y, w, h) = (d['left'][i], d['top'][i], d['width'][i], d['height'][i])
+													nmg = cv2.rectangle(img, (x, y), (x + w, y + h), (0, 0, 0), -1)
+													j+=1
+													print("******",j)
+												if count > 3 and count <=6:
+													(x, y, w, h) = (d['left'][i], d['top'][i], d['width'][i], d['height'][i])
+													nmg = cv2.rectangle(img, (x, y), (x + w, y + h), (0, 0, 0), -1)
+													j+=1
+													print("******",j)
+
+									else:
+							            #print("***fail***")
+											nmg1=img
+								#cv2.imwrite(dpath+'/tt.jpg',nmg)
+								print("jj",j)
+								if j==2 and nn <= 10:
+									print("Success",j)
+									cv2.imwrite(dpath +'/'+ name,nmg)
+								elif j == 4:
+									cv2.imwrite(dpath +'/'+ name,nmg)
+								else:
+									print("Fail",j)
+									cv2.imwrite(notmasked +'/'+ name,nmg1)
+#############################################################################################
+							elif ID_type == 'full_adhar':
+								d = pytesseract.image_to_data(imgff, output_type=Output.DICT)
+								print(d)
+								n_boxes = len(d['level'])
+								ll = max(d['left'])
+								nn = max(d['block_num'])
+								print("****nn**",nn)
+								print("image name is = ",name)
+								print("****ll**",ll)
+								count = 0
+								j=0
+								for i in range(n_boxes):
+									stad1=d['text'][i].replace('_','')
+									if stad1.isnumeric() and len(stad1) == 4:
+										print(stad1,"stad1")
+										if d['text'][::-1].index(d['text'][i]) != 0:
+											stad2=d['text'][i+1].replace('_','')
+											count = count + 1
+											if (len(stad2) == 4 and stad2.isnumeric()) or (len(stad2) > 4 and stad2 [:4].isnumeric()):
+											#if stad2.isnumeric() and len(stad2) == 4:
+												print(stad2,"stad2")
+												
+												print("count",count)
+												count = count+1
+												if count == 3:
+													continue 
+												(x, y, w, h) = (d['left'][i], d['top'][i], d['width'][i], d['height'][i])
+												nmg = cv2.rectangle(imgff, (x, y), (x + w, y + h), (0, 0, 0), -1)
+												j+=1
+												count = 0
+
+												# if count < 3:                        
+												# 	(x, y, w, h) = (d['left'][i], d['top'][i], d['width'][i], d['height'][i])
+												# 	nmg = cv2.rectangle(img, (x, y), (x + w, y + h), (0, 0, 0), -1)
+												# 	j+=1
+												# 	print("******",j)
+												# if count > 3 and count <=6:
+												# 	(x, y, w, h) = (d['left'][i], d['top'][i], d['width'][i], d['height'][i])
+												# 	nmg = cv2.rectangle(imgff, (x, y), (x + w, y + h), (0, 0, 0), -1)
+												# 	j+=1
+												# 	print("******",j)
+
+									else:
+							            #print("***fail***")
+											nmg1=imgff
+								#cv2.imwrite(dpath+'/tt.jpg',nmg)
+								# print("jj",j)
+								# if j==2 and nn <= 10:
+								# 	print("Success",j)
+								# 	cv2.imwrite(dpath +'/'+ name,nmg)
+								if j == 4:
+									cv2.imwrite(dpath +'/'+ name,nmg)
+								else:
+									print("Fail",j)
+									cv2.imwrite(notmasked +'/'+ name,nmg1)
+##############################################################################
+
+							else:
+								print("Failed")
+								cv2.imwrite(notmasked +'/'+ name,img)
+
+				returnResponse = {"statuscode": "100-0002", "statusmessage": "Successfully aadhar number is masked","spath":spath}
+			else:
+				returnResponse = {"statuscode": "101-0003", "statusmessage": "field should not be empty."}
+		except Exception as e:
+			returnResponse = {"statuscode": "500", "error": str(e)}
+			#logging.info(e)
+	response = JsonResponse(returnResponse)
+	response["Access-Control-Allow-Origin"] = "*"
+	return response
